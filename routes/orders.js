@@ -4,8 +4,24 @@ const multer = require('multer');
 const Order = require('../models/Order');
 const path = require('path');
 const fs = require('fs');
+const cors = require('cors');
 
-// Configure multer for file uploads
+// Enable CORS for all routes (adjust origin as needed)
+router.use(cors({
+  origin: 'https://autokraft.vercel.app', // Your frontend URL
+  methods: ['GET', 'POST'],
+  credentials: true,
+}));
+
+// Force HTTPS middleware (for proxies like Vercel)
+router.use((req, res, next) => {
+  if (req.headers['x-forwarded-proto'] !== 'https' && process.env.NODE_ENV === 'production') {
+    return res.redirect(`https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
+
+// Multer configuration for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = 'uploads/payments/';
@@ -15,7 +31,7 @@ const storage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
@@ -31,36 +47,38 @@ const upload = multer({
   }
 });
 
-// Create new order with payment screenshot
+// Create new order
 router.post('/', upload.single('paymentScreenshot'), async (req, res) => {
   try {
     const { name, email, phone, address, pincode, city, totalAmount, products } = req.body;
 
-    // Basic validation
-    if (!products || JSON.parse(products).length === 0) {
+    if (!products) {
+      return res.status(400).json({ error: 'Products data is required' });
+    }
+
+    const parsedProducts = JSON.parse(products);
+
+    if (!Array.isArray(parsedProducts) || parsedProducts.length === 0) {
       return res.status(400).json({ error: 'Cart cannot be empty' });
     }
 
     if (!email || !address || !req.file) {
-      return res.status(400).json({ error: 'Required fields missing' });
+      return res.status(400).json({ error: 'Required fields missing or payment screenshot not uploaded' });
     }
 
     const order = new Order({
       customerInfo: { name, email, phone, address, pincode, city },
-      products: JSON.parse(products),
+      products: parsedProducts,
       totalAmount,
       paymentScreenshot: req.file.path,
       status: 'pending'
     });
 
     await order.save();
-    res.status(201).json(order);
+    res.status(201).json({ success: true, order });
   } catch (error) {
     console.error('Order creation error:', error);
-    res.status(400).json({ 
-      error: 'Order processing failed',
-      details: error.message 
-    });
+    res.status(400).json({ error: 'Order processing failed', details: error.message });
   }
 });
 
@@ -71,10 +89,7 @@ router.get('/', async (req, res) => {
     res.json(orders);
   } catch (error) {
     console.error('Order fetch error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch orders',
-      details: error.message 
-    });
+    res.status(500).json({ error: 'Failed to fetch orders', details: error.message });
   }
 });
 
